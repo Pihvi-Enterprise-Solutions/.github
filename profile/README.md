@@ -12,8 +12,10 @@ Stay tuned — we're crafting something powerful under the hood.
 ---
 
 🔧 **Tech domains:** Cloud Infra • Dev Tooling • AI Automation • Observability
+
 📡 **Focus:** Resilient systems that scale cleanly
-💬 **Follow:** More soon at [pihvi.dev/]([https://github.com/pihvi-enterprise](https://pihvi.dev/))
+
+💬 **Follow:** More soon at [pihvi.dev](https://pihvi.dev/)
 
 ---
 
