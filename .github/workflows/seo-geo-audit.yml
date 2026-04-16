@@ -1,0 +1,100 @@
+name: SEO/GEO Audit
+
+on:
+  workflow_call:
+    inputs:
+      node_version:
+        required: false
+        default: "22"
+        type: string
+      config_path:
+        required: false
+        default: "seo-config.yml"
+        type: string
+      package_version:
+        required: false
+        default: "latest"
+        type: string
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node_version }}
+
+      - name: Configure GitHub Packages registry
+        run: |
+          echo "@pihvi-enterprise-solutions:registry=https://npm.pkg.github.com" >> ~/.npmrc
+          echo "//npm.pkg.github.com/:_authToken=${{ secrets.GITHUB_TOKEN }}" >> ~/.npmrc
+
+      - name: Install seo-engine
+        run: npm install -g @pihvi-enterprise-solutions/seo-geo-engine@${{ inputs.package_version }}
+
+      - name: Find changed content files
+        id: changed
+        run: |
+          FILES=$(git diff --name-only ${{ github.event.pull_request.base.sha }}...${{ github.sha }} | grep -E '\.(md|mdx|html)$' || true)
+          echo "files<<EOF" >> $GITHUB_OUTPUT
+          echo "$FILES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          [ -n "$FILES" ] && echo "has_content=true" >> $GITHUB_OUTPUT || echo "has_content=false" >> $GITHUB_OUTPUT
+
+      - name: Build audit artifact
+        if: steps.changed.outputs.has_content == 'true'
+        run: |
+          mkdir -p .seo-engine
+          echo '{"articles": [' > .seo-engine/generated-content.json
+          FIRST=true
+          while IFS= read -r file; do
+            [ -z "$file" ] && continue
+            [ "$FIRST" = true ] && FIRST=false || echo ',' >> .seo-engine/generated-content.json
+            echo "{\"path\": \"$file\", \"title\": \"$file\", \"keyword\": \"\", \"word_count\": 0}" >> .seo-engine/generated-content.json
+          done <<< "${{ steps.changed.outputs.files }}"
+          echo ']}' >> .seo-engine/generated-content.json
+
+      - name: Run GEO audit
+        if: steps.changed.outputs.has_content == 'true'
+        run: seo-engine geo --config ${{ inputs.config_path }}
+
+      - name: Comment on PR
+        if: steps.changed.outputs.has_content == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = '.seo-engine/geo-report.json';
+            if (!fs.existsSync(path)) return;
+
+            const report = JSON.parse(fs.readFileSync(path, 'utf-8'));
+            let body = '## GEO Audit Results\n\n';
+            body += '| File | GEO Score | Citability | Structure | Authority | Multi-Modal | Technical |\n';
+            body += '|------|-----------|------------|-----------|-----------|-------------|----------|\n';
+
+            for (const a of report.articles || []) {
+              const d = a.dimensions || {};
+              body += `| \`${a.path}\` | **${a.geo_score}/100** | ${d.citability?.score ?? '-'} | ${d.structural_readability?.score ?? '-'} | ${d.authority_signals?.score ?? '-'} | ${d.multi_modal?.score ?? '-'} | ${d.technical_accessibility?.score ?? '-'} |\n`;
+            }
+
+            if (report.articles?.some(a => a.recommendations?.length > 0)) {
+              body += '\n### Recommendations\n\n';
+              for (const a of report.articles) {
+                if (a.recommendations?.length > 0) {
+                  body += `**\`${a.path}\`**\n`;
+                  for (const r of a.recommendations) body += `- ${r}\n`;
+                  body += '\n';
+                }
+              }
+            }
+
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body
+            });
