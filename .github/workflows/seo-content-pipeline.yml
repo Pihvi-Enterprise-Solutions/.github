@@ -1,4 +1,5 @@
 name: SEO/GEO Content Pipeline
+# Reusable workflow — synced to org .github repo via sync-workflows.yml
 
 on:
   workflow_call:
